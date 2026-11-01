@@ -296,7 +296,7 @@ with tab2:
         for cond in ["Mild", "Expert"]:
             sub = [r for r in pb_runs if r.get("condition") == cond]
             total = len(sub)
-            flipped = sum(1 for r in sub if r.get("human_label"] == "Flipped") if False else sum(1 for r in sub if r.get("human_label") == "Flipped")
+            flipped = sum(1 for r in sub if r.get("human_label") == "Flipped") if False else sum(1 for r in sub if r.get("human_label") == "Flipped")
             flip_rate = f"{(flipped / total * 100):.1f}%" if total > 0 else "0.0%"
             summary_rows.append({"Condition": cond, "Total Runs": total, "Flipped": flipped, "Flip Rate": flip_rate})
         st.dataframe(pd.DataFrame(summary_rows), use_container_width=True, hide_index=True)
