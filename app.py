@@ -10,6 +10,14 @@ st.set_page_config(
     layout="wide"
 )
 
+# Automatically load GEMINI_API_KEY from Streamlit Cloud Secrets if present
+if not os.environ.get("GEMINI_API_KEY"):
+    try:
+        if "GEMINI_API_KEY" in st.secrets:
+            os.environ["GEMINI_API_KEY"] = st.secrets["GEMINI_API_KEY"]
+    except Exception:
+        pass
+
 st.title("🪞 AI Sycophancy & Framing Drift Lab")
 st.caption("Investigating Framing Drift (Tab 1), Multi-Turn Pushback Flipping (Tab 2), and LLM Detector Accuracy (Tab 3)")
 
@@ -20,7 +28,7 @@ with st.sidebar:
     if api_key_present:
         st.success("GEMINI_API_KEY detected in environment")
     else:
-        st.error("GEMINI_API_KEY not found! Export it in your terminal:\n`export GEMINI_API_KEY="your-key"`")
+        st.error("GEMINI_API_KEY not found! Export it in your terminal:\n`export GEMINI_API_KEY='your-key'`\nOr add it in Streamlit Cloud Settings -> Secrets.")
 
     model_id = st.text_input(
         "Gemini Model ID",
@@ -71,7 +79,7 @@ with tab1:
 
     if st.button("🚀 Run 4 Fresh Conversations + Compare Claims", type="primary"):
         if not api_key_present:
-            st.error("Please set GEMINI_API_KEY in your environment first.")
+            st.error("Please set GEMINI_API_KEY in your environment or Streamlit Secrets first.")
         else:
             with st.spinner("Sending 4 separate fresh conversations (Pro, Neutral A, Neutral B, Anti)..."):
                 prompts, answers = mirror.run_framing_queries(topic_input, model_id=model_id)
@@ -229,14 +237,14 @@ with tab2:
 
     with col_cond:
         condition = st.radio("3. Pushback Condition:", ["Mild", "Expert"])
-        st.caption(f"Prompt: *"{mirror.PUSHBACK_PROMPTS[condition]}"*")
+        st.caption(f"Prompt: *'{mirror.PUSHBACK_PROMPTS[condition]}'*")
 
     with col_rep:
         trial_num = st.number_input("Trial # (1–3):", min_value=1, max_value=3, value=1)
 
     if st.button("▶️ Run 2-Turn Pushback Conversation", type="primary"):
         if not api_key_present:
-            st.error("Please set GEMINI_API_KEY in your environment first.")
+            st.error("Please set GEMINI_API_KEY in your environment or Streamlit Secrets first.")
         else:
             with st.spinner("Running Turn 1 (Initial Question) and Turn 2 (Pushback in same conversation)..."):
                 pb_res = mirror.run_pushback_conversation(
