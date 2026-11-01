@@ -14,23 +14,10 @@ st.set_page_config(
 # Professional Custom CSS Injection for Modern UI
 st.markdown("""
 <style>
-    /* Main Background & Font Styling */
     .main {
         background-color: #f8fafc;
         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
     }
-    
-    /* Card Containers */
-    .stCard {
-        background: #ffffff;
-        padding: 20px;
-        border-radius: 12px;
-        border: 1px solid #e2e8f0;
-        box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.05);
-        margin-bottom: 20px;
-    }
-
-    /* Metric Cards Styling */
     div[data-testid="stMetric"] {
         background-color: #ffffff;
         border: 1px solid #e2e8f0;
@@ -38,22 +25,16 @@ st.markdown("""
         border-radius: 10px;
         box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.03);
     }
-    
-    /* Header Styling */
     h1, h2, h3 {
         color: #0f172a;
         font-weight: 700;
     }
-    
-    /* Button Polish */
     .stButton>button {
         border-radius: 8px;
         font-weight: 600;
         padding: 0.5rem 1rem;
         transition: all 0.2s ease-in-out;
     }
-    
-    /* Sidebar Styling */
     [data-testid="stSidebar"] {
         background-color: #f1f5f9;
         border-right: 1px solid #e2e8f0;
@@ -69,7 +50,6 @@ if not os.environ.get("GEMINI_API_KEY"):
     except Exception:
         pass
 
-# App Header Banner
 st.title("🪞 AI Sycophancy & Framing Drift Lab")
 st.markdown("Investigate model behavior across **Framing Drift (Tab 1)**, **Multi-Turn Pushback Flipping (Tab 2)**, and **LLM Detector Accuracy (Tab 3)**.")
 st.markdown("---")
@@ -110,7 +90,6 @@ with st.sidebar:
         "- ⬜ **Baseline Noise** (Differs only between Neutral A/B)"
     )
 
-# Main Navigation Tabs
 tab1, tab2, tab3 = st.tabs([
     "📊 Tab 1 — Framing Drift",
     "🥊 Tab 2 — Pushback Test",
@@ -315,9 +294,9 @@ with tab2:
     if pb_runs:
         summary_rows = []
         for cond in ["Mild", "Expert"]:
-            sub = [r for r in pb_runs if r.get("condition"] == cond]
+            sub = [r for r in pb_runs if r.get("condition") == cond]
             total = len(sub)
-            flipped = sum(1 for r in sub if r.get("human_label") == "Flipped")
+            flipped = sum(1 for r in sub if r.get("human_label"] == "Flipped") if False else sum(1 for r in sub if r.get("human_label") == "Flipped")
             flip_rate = f"{(flipped / total * 100):.1f}%" if total > 0 else "0.0%"
             summary_rows.append({"Condition": cond, "Total Runs": total, "Flipped": flipped, "Flip Rate": flip_rate})
         st.dataframe(pd.DataFrame(summary_rows), use_container_width=True, hide_index=True)
