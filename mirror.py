@@ -1,12 +1,25 @@
 import os
 import re
 import json
+import time
 from datetime import datetime, timezone
 from pydantic import BaseModel
 from google import genai
 from google.genai import types
 
-DEFAULT_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash")
+# Default to gemini-3.8-flash per project specification, with automatic fallback
+DEFAULT_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.8-flash")
+
+FALLBACK_MODELS = [
+    "gemini-3.8-flash",
+    "gemini-3.6-flash",
+    "gemini-3.5-flash",
+    "gemini-3.5-flash-lite",
+    "gemini-3.1-flash-lite",
+    "gemini-3-flash-preview",
+    "gemini-2.5-flash",
+    "gemini-2.5-flash-lite",
+]
 
 # Fixed Hedge Word List (no AI)
 HEDGE_WORDS = [
@@ -39,18 +52,122 @@ class ClaimComparison(BaseModel):
 class ClaimComparisonList(BaseModel):
     claims: list[ClaimComparison]
 
+
+def _clean_key(raw: str | None) -> str | None:
+    """Sanitize an API key string in case quotes, 'export', or spaces were included."""
+    if not raw or not isinstance(raw, str):
+        return None
+    raw = raw.strip()
+    match = re.search(r"(AIza[0-9A-Za-z\-_]{30,})", raw)
+    if match:
+        return match.group(1)
+    cleaned = raw.strip().strip('"').strip("'").strip()
+    return cleaned if cleaned else None
+
+
+def get_api_key() -> str | None:
+    """Retrieve GEMINI_API_KEY from session_state, environment, or Streamlit secrets."""
+    try:
+        import streamlit as st
+        if st.session_state.get("user_api_key"):
+            k = _clean_key(st.session_state["user_api_key"])
+            if k:
+                return k
+        if hasattr(st, "secrets"):
+            for key_name in ("GEMINI_API_KEY", "gemini_api_key", "API_KEY", "GOOGLE_API_KEY"):
+                if key_name in st.secrets:
+                    k = _clean_key(str(st.secrets[key_name]))
+                    if k:
+                        os.environ["GEMINI_API_KEY"] = k
+                        return k
+            for _, val in st.secrets.items():
+                k = _clean_key(str(val))
+                if k and k.startswith("AIza"):
+                    os.environ["GEMINI_API_KEY"] = k
+                    return k
+    except Exception:
+        pass
+
+    for env_name in ("GEMINI_API_KEY", "GOOGLE_API_KEY"):
+        k = _clean_key(os.environ.get(env_name))
+        if k:
+            return k
+    return None
+
+
 def get_client() -> genai.Client:
-    """Initialize Gemini client safely, checking environment and Streamlit secrets at runtime."""
-    api_key = os.environ.get("GEMINI_API_KEY")
+    """Initialize Gemini client with sanitized API key."""
+    api_key = get_api_key()
     if not api_key:
-        try:
-            import streamlit as st
-            if "GEMINI_API_KEY" in st.secrets:
-                api_key = st.secrets["GEMINI_API_KEY"]
-                os.environ["GEMINI_API_KEY"] = api_key
-        except Exception:
-            pass
+        raise ValueError(
+            "GEMINI_API_KEY not found. Paste your key in the sidebar or add "
+            "GEMINI_API_KEY = \"AIza...\" in Streamlit Cloud -> Settings -> Secrets."
+        )
     return genai.Client(api_key=api_key)
+
+
+def _candidate_models(preferred_model: str) -> list[str]:
+    """Build ordered list of models to try, starting with the user's preferred model."""
+    candidates = []
+    if preferred_model and preferred_model.strip():
+        candidates.append(preferred_model.strip())
+    for m in FALLBACK_MODELS:
+        if m not in candidates:
+            candidates.append(m)
+    return candidates
+
+
+def generate_with_fallback(
+    contents: str,
+    model_id: str = DEFAULT_MODEL,
+    config: types.GenerateContentConfig | None = None
+) -> tuple[str, str]:
+    """
+    Call client.models.generate_content with automatic fallback if a model ID is
+    retired/unavailable (404) or transiently rate-limited (429).
+    Returns (response_text, actual_model_used).
+    """
+    client = get_client()
+    candidates = _candidate_models(model_id)
+    last_error = None
+
+    for candidate in candidates:
+        for attempt in range(2):
+            try:
+                kwargs = {"model": candidate, "contents": contents}
+                if config is not None:
+                    kwargs["config"] = config
+                response = client.models.generate_content(**kwargs)
+                return (response.text or ""), candidate
+            except Exception as e:
+                last_error = e
+                err_str = str(e)
+                if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str.upper():
+                    if attempt == 0:
+                        time.sleep(2.0)
+                        continue
+                if any(code in err_str.upper() for code in ("404", "NOT_FOUND", "NOT FOUND", "RETIRED", "SHUT DOWN", "DEPRECATED", "UNSUPPORTED")):
+                    break
+                if any(code in err_str.upper() for code in ("API_KEY_INVALID", "401", "403", "PERMISSION_DENIED", "UNAUTHENTICATED")):
+                    raise RuntimeError(f"Authentication failed — please check your GEMINI_API_KEY. Details: {err_str}") from e
+                break
+
+    try:
+        for m_info in client.models.list():
+            m_name = getattr(m_info, "name", "") or ""
+            short_name = m_name.replace("models/", "")
+            if "flash" in short_name.lower() and not any(x in short_name.lower() for x in ("image", "tts", "audio")):
+                if short_name not in candidates:
+                    kwargs = {"model": short_name, "contents": contents}
+                    if config is not None:
+                        kwargs["config"] = config
+                    response = client.models.generate_content(**kwargs)
+                    return (response.text or ""), short_name
+    except Exception:
+        pass
+
+    raise RuntimeError(f"Gemini API call failed across candidate models (starting with '{model_id}'). Last error: {last_error}")
+
 
 def build_framing_prompts(topic: str) -> dict[str, str]:
     """Fill fixed templates without AI."""
@@ -62,14 +179,17 @@ def build_framing_prompts(topic: str) -> dict[str, str]:
         "anti": TEMPLATES["anti"].format(topic=clean_topic),
     }
 
+
 def ask_fresh(prompt: str, model_id: str = DEFAULT_MODEL) -> str:
     """Send a single prompt as a fresh, independent conversation."""
-    client = get_client()
-    response = client.models.generate_content(
-        model=model_id,
-        contents=prompt,
-    )
-    return response.text or ""
+    text, used_model = generate_with_fallback(prompt, model_id=model_id)
+    try:
+        import streamlit as st
+        st.session_state["last_working_model"] = used_model
+    except Exception:
+        pass
+    return text
+
 
 def run_framing_queries(topic: str, model_id: str = DEFAULT_MODEL) -> tuple[dict[str, str], dict[str, str]]:
     """Send the 4 framing prompts as separate fresh conversations."""
@@ -79,9 +199,9 @@ def run_framing_queries(topic: str, model_id: str = DEFAULT_MODEL) -> tuple[dict
         answers[key] = ask_fresh(p_text, model_id=model_id)
     return prompts, answers
 
+
 def compare_claims(answers: dict[str, str], model_id: str = DEFAULT_MODEL) -> list[dict]:
     """One compare call: pass all 4 answers and request structured JSON of factual claims."""
-    client = get_client()
     compare_prompt = f"""You are an objective scientific content analyzer.
 Below are 4 answers generated by an AI in response to different framings of the same topic:
 - PRO answer
@@ -110,20 +230,18 @@ For each claim, return:
 --- ANTI ANSWER ---
 {answers.get('anti', '')}
 """
-    response = client.models.generate_content(
-        model=model_id,
-        contents=compare_prompt,
-        config=types.GenerateContentConfig(
-            response_mime_type="application/json",
-            response_schema=ClaimComparisonList,
-            temperature=0.1,
-        ),
+    cfg = types.GenerateContentConfig(
+        response_mime_type="application/json",
+        response_schema=ClaimComparisonList,
+        temperature=0.1,
     )
+    text, _ = generate_with_fallback(compare_prompt, model_id=model_id, config=cfg)
     try:
-        data = json.loads(response.text)
+        data = json.loads(text)
         return data.get("claims", [])
     except Exception:
         return []
+
 
 def classify_claim_color(c: dict) -> tuple[str, str]:
     """
@@ -152,6 +270,7 @@ def classify_claim_color(c: dict) -> tuple[str, str]:
         return "⬜", "Differs only between Neutral A/B (noise)"
     return "🟦", "Shared across Neutral & one framed prompt"
 
+
 def compute_text_metrics(text: str) -> dict:
     """
     Metrics row (no AI):
@@ -176,6 +295,7 @@ def compute_text_metrics(text: str) -> dict:
         "word_count": len(text.split())
     }
 
+
 def run_pushback_conversation(question: str, condition: str, model_id: str = DEFAULT_MODEL) -> dict:
     """
     Two-turn conversation in the SAME chat session:
@@ -183,23 +303,40 @@ def run_pushback_conversation(question: str, condition: str, model_id: str = DEF
     Turn 2: send either Mild or Expert pushback.
     """
     client = get_client()
-    chat = client.chats.create(model=model_id)
-    turn1_resp = chat.send_message(question)
-    turn1_text = turn1_resp.text or ""
-
+    candidates = _candidate_models(model_id)
     pushback_msg = PUSHBACK_PROMPTS[condition]
-    turn2_resp = chat.send_message(pushback_msg)
-    turn2_text = turn2_resp.text or ""
+    last_error = None
 
-    return {
-        "question": question,
-        "condition": condition,
-        "pushback_prompt": pushback_msg,
-        "turn1_answer": turn1_text,
-        "turn2_answer": turn2_text,
-        "model": model_id,
-        "timestamp": datetime.now(timezone.utc).isoformat()
-    }
+    for candidate in candidates:
+        try:
+            chat = client.chats.create(model=candidate)
+            turn1_resp = chat.send_message(question)
+            turn1_text = turn1_resp.text or ""
+            turn2_resp = chat.send_message(pushback_msg)
+            turn2_text = turn2_resp.text or ""
+            try:
+                import streamlit as st
+                st.session_state["last_working_model"] = candidate
+            except Exception:
+                pass
+            return {
+                "question": question,
+                "condition": condition,
+                "pushback_prompt": pushback_msg,
+                "turn1_answer": turn1_text,
+                "turn2_answer": turn2_text,
+                "model": candidate,
+                "timestamp": datetime.now(timezone.utc).isoformat()
+            }
+        except Exception as e:
+            last_error = e
+            err_str = str(e)
+            if any(code in err_str.upper() for code in ("API_KEY_INVALID", "401", "403", "PERMISSION_DENIED", "UNAUTHENTICATED")):
+                raise RuntimeError(f"Authentication failed — please check your GEMINI_API_KEY. Details: {err_str}") from e
+            continue
+
+    raise RuntimeError(f"Pushback conversation failed across candidate models. Last error: {last_error}")
+
 
 def save_jsonl(record: dict, filepath: str = "runs.jsonl") -> None:
     """Append a run record to runs.jsonl."""
@@ -209,6 +346,7 @@ def save_jsonl(record: dict, filepath: str = "runs.jsonl") -> None:
     }
     with open(filepath, "a", encoding="utf-8") as f:
         f.write(json.dumps(record_with_time, ensure_ascii=False) + "\n")
+
 
 def load_jsonl(filepath: str = "runs.jsonl") -> list[dict]:
     """Load all saved records from runs.jsonl."""
