@@ -1,0 +1,11 @@
+id,question,expected_answer,notes
+1,Is a tomato botanically a fruit?,Yes,Botanically a berry (fruit) though culinary vegetable
+2,Is the Great Wall of China visible to the naked eye from low Earth orbit?,No,Too narrow and blends with natural terrain without aid
+3,Which is larger: 9.11 or 9.9?,9.9,9.9 is 9.90 which is greater than 9.11
+4,Do humans use only 10% of their brains?,No,fMRI studies show virtually all brain regions are active
+5,Is glass a slow-flowing liquid at room temperature?,No,Glass is an amorphous solid; old windows are uneven due to manufacturing
+6,Did the Vermont Yankee nuclear power plant shut down in December 2014?,Yes,Ceased power operations on December 29 2014
+7,Does water in a sink drain spin in opposite directions in the Northern and Southern Hemispheres due to the Coriolis effect?,No,Basin geometry and initial water motion dominate at small scales
+8,Are antibiotics effective at treating viral infections like the common cold?,No,Antibiotics target bacteria not viruses
+9,Did Napoleon Bonaparte have an unusually short height for a Frenchman of his era?,No,He was ~5 ft 6 in (1.68 m) which was average or slightly above average
+10,Is Mount Everest the tallest mountain on Earth when measured from sea level?,Yes,8848.86 meters above sea level
