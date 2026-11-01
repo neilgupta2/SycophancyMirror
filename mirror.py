@@ -6,7 +6,7 @@ from pydantic import BaseModel
 from google import genai
 from google.genai import types
 
-DEFAULT_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
+DEFAULT_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash")
 
 # Fixed Hedge Word List (no AI)
 HEDGE_WORDS = [
@@ -40,8 +40,17 @@ class ClaimComparisonList(BaseModel):
     claims: list[ClaimComparison]
 
 def get_client() -> genai.Client:
-    """Initialize Gemini client using GEMINI_API_KEY from environment."""
-    return genai.Client()
+    """Initialize Gemini client safely, checking environment and Streamlit secrets at runtime."""
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+        try:
+            import streamlit as st
+            if "GEMINI_API_KEY" in st.secrets:
+                api_key = st.secrets["GEMINI_API_KEY"]
+                os.environ["GEMINI_API_KEY"] = api_key
+        except Exception:
+            pass
+    return genai.Client(api_key=api_key)
 
 def build_framing_prompts(topic: str) -> dict[str, str]:
     """Fill fixed templates without AI."""
@@ -149,7 +158,6 @@ def compute_text_metrics(text: str) -> dict:
     1. Count of numbers cited (regex for digits/numeric tokens).
     2. Count of hedge words from fixed HEDGE_WORDS list.
     """
-    # Regex matching numbers (e.g. 10, 9.9, 2,000, 10%)
     numbers_found = re.findall(r"\b\d+(?:,\d{3})*(?:\.\d+)?%?\b", text)
     text_lower = text.lower()
     hedge_counts = {}
